@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DC 離線完全體</title>
+    <style>
+        :root { --bg: #36393f; --header: #2f3136; --msg: #40444b; --text: #dcddde; --blue: #5865f2; --time: #72767d; }
+        .light-theme { --bg: #ffffff; --header: #f2f3f5; --msg: #ebedef; --text: #2e3338; --blue: #0067e0; --time: #5c5e66; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: var(--bg); color: var(--text); }
+        body { display: flex; flex-direction: column; font-family: sans-serif; }
+        
+        .header { background: var(--header); padding: 10px 15px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.2); z-index: 5; }
+        #search-bar { display: none; background: var(--header); padding: 8px 15px; border-bottom: 1px solid rgba(0,0,0,0.2); }
+        #search-input { width: 100%; background: var(--bg); border: 1px solid var(--blue); padding: 8px; color: var(--text); border-radius: 5px; outline: none; }
+
+        #chat-list { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 15px; }
+        .message { background: var(--msg); padding: 12px; border-radius: 8px; max-width: 90%; word-break: break-all; position: relative; cursor: pointer; }
+        .message:active { opacity: 0.7; }
+        .msg-info { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+        .u-name { color: var(--blue); font-size: 14px; font-weight: bold; }
+        .u-time { color: var(--time); font-size: 11px; }
+        .img-preview { max-width: 100%; border-radius: 5px; margin-top: 8px; display: block; }
+
+        .footer { background: var(--header); padding: 10px 10px 30px; flex-shrink: 0; }
+        .input-group { display: flex; background: var(--msg); border-radius: 8px; padding: 5px; align-items: center; gap: 8px; }
+        input[type="text"] { flex: 1; background: transparent; border: none; padding: 10px; color: var(--text); font-size: 16px; outline: none; }
+        .upload-btn { font-size: 24px; cursor: pointer; color: #b9bbbe; padding: 0 5px; }
+        .btn-blue { background: var(--blue); color: white; border: none; border-radius: 5px; padding: 8px 15px; font-weight: bold; }
+    </style>
+</head>
+<body onload="initDB()">
+
+    <div class="header">
+        <div onclick="setName()"># <span id="display-name">用戶</span></div>
+        <div style="display: flex; gap: 10px;">
+            <button onclick="toggleSearch()" style="background:transparent; border:none; font-size:18px; color:white;">🔍</button>
+            <button onclick="toggleTheme()" style="background:transparent; border:none; font-size:18px;">🌓</button>
+            <button onclick="clearAll()" style="background:#ed4245; color:white; border:none; border-radius:4px; font-size:12px; padding:5px;">清空</button>
+        </div>
+    </div>
+
+    <div id="search-bar"><input type="text" id="search-input" placeholder="搜尋..." oninput="render()"></div>
+    <div id="chat-list"></div>
+
+    <div class="footer">
+        <div class="input-group">
+            <label class="upload-btn">⊕<input type="file" id="fileInput" style="display:none;" onchange="handleFile(this)"></label>
+            <input type="text" id="msg" placeholder="輸入訊息...">
+            <button class="btn-blue" onclick="sendText()">發送</button>
+        </div>
+    </div>
+
+    <script>
+        let db;
+        let userName = localStorage.getItem('dc_name') || '用戶';
+
+        function initDB() {
+            const request = indexedDB.open("DC_Final_DB", 1);
+            request.onupgradeneeded = e => { e.target.result.createObjectStore("messages", { keyPath: "id", autoIncrement: true }); };
+            request.onsuccess = e => {
+                db = e.target.result;
+                document.getElementById('display-name').innerText = userName;
+                if(localStorage.getItem('theme') === 'light') document.body.classList.add('light-theme');
+                render();
+            };
+        }
+
+        function saveMsg(obj) {
+            obj.ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const tx = db.transaction("messages", "readwrite");
+            tx.objectStore("messages").add(obj).onsuccess = render;
+        }
+
+        function deleteMsg(id) {
+            if(confirm("要刪除這則訊息嗎？")) {
+                const tx = db.transaction("messages", "readwrite");
+                tx.objectStore("messages").delete(id).onsuccess = render;
+            }
+        }
+
+        function render() {
+            const list = document.getElementById('chat-list');
+            const keyword = document.getElementById('search-input').value.toLowerCase();
+            list.innerHTML = '';
+            
+            db.transaction("messages", "readonly").objectStore("messages").openCursor().onsuccess = e => {
+                const cursor = e.target.result;
+                if (cursor) {
+                    const m = cursor.value;
+                    const contentStr = m.type === 'text' ? m.v : (m.n || "");
+                    if (contentStr.toLowerCase().includes(keyword)) {
+                        const div = document.createElement('div');
+                        div.className = 'message';
+                        div.onclick = () => deleteMsg(m.id);
+                        let html = `<div class="msg-info"><span class="u-name">${m.u}</span><span class="u-time">${m.ts}</span></div>`;
+                        if(m.type === 'text') html += `<div>${m.v}</div>`;
+                        else if(m.type === 'img') html += `<img src="${URL.createObjectURL(m.v)}" class="img-preview">`;
+                        else html += `<div style="color:#00aff4">附件：${m.n}</div>`;
+                        div.innerHTML = html;
+                        list.appendChild(div);
+                    }
+                    cursor.continue();
+                }
+                if(!keyword) list.scrollTop = list.scrollHeight;
+            };
+        }
+
+        function handleFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+            saveMsg({ u: userName, type: file.type.startsWith('image/') ? 'img' : 'file', v: file, n: file.name });
+            input.value = '';
+        }
+
+        function sendText() {
+            const i = document.getElementById('msg');
+            if(!i.value.trim()) return;
+            saveMsg({ u: userName, type: 'text', v: i.value });
+            i.value = '';
+        }
+
+        function toggleSearch() {
+            const bar = document.getElementById('search-bar');
+            bar.style.display = (bar.style.display === 'block') ? 'none' : 'block';
+            if(bar.style.display === 'none') { document.getElementById('search-input').value = ''; render(); }
+        }
+
+        function toggleTheme() {
+            document.body.classList.toggle('light-theme');
+            localStorage.setItem('theme', document.body.classList.contains('light-theme') ? 'light' : 'dark');
+        }
+
+        function setName() {
+            let n = prompt("暱稱：", userName);
+            if(n) { userName = n; localStorage.setItem('dc_name', n); document.getElementById('display-name').innerText = n; render(); }
+        }
+
+        function clearAll() { if(confirm("清空所有資料？")) { db.transaction("messages", "readwrite").objectStore("messages").clear().onsuccess = render; } }
+
+        document.getElementById('msg').addEventListener('keypress', e => { if(e.key === 'Enter') sendText(); });
+    </script>
+</body>
+</html>
